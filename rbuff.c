@@ -1,50 +1,43 @@
-#include "gn_buff.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-gn_buff_t 	*
-gn_buff_new(size_t buff_size)
+#include "rbuff.h"
+#include <stddef.h>
+
+rbuff_t 	*
+rbuff_new(size_t buff_size)
 {
-	gn_buff_t	*gb;
+	rbuff_t	*gb;
 
-#ifdef GN_BUFF_NOT_STATIC 
 	gb = malloc(sizeof(*gb) + buff_size);
 	if (!gb)
 		return (NULL);
 	gb->bfs = buff_size;
-#else
-	(void)buff_size;
-	gb = malloc(sizeof(*gb));
-	if (!gb)
-		return (NULL);
-	gb->bfs = STATIC_RN_BUFF_SIZE;
-#endif
 	gb->wi = 0;
 	gb->ri = 0;
+	gb->next = NULL;
 	return (gb);
 }
 
 int
-gn_buff_init(gn_buff_t **gb, size_t buff_size)
+rbuff_init(rbuff_t **gb, void *_Nullable ptr, size_t n)
 {
-#ifdef GN_BUFF_NOT_STATIC 
-	*gb = malloc(sizeof(**gb) + buff_size);
-	if (!*gb)
+	if (n < sizeof(rbuff_t) + 2)
 		return (-1);
-	(*gb)->bfs = buff_size;
-#else
-	(void)buff_size;
-	*gb = malloc(sizeof(**gb));
-	if (!*gb)
-		return (-1);
-	(*gb)->bfs = STATIC_RN_BUFF_SIZE;
-#endif
+	if (!ptr)
+		ptr = malloc(n)
+			;
+	*gb = ptr;
+	(*gb)->bfs = n - sizeof(rbuff_t);
 	(*gb)->wi = 0;
 	(*gb)->ri = 0;
+	(*gb)->next = NULL;
 	return (0);
 }
 
-
 ssize_t
-rn_buff_read(gn_buff_t *rb, void *buff, size_t n)
+rbuff_read(rbuff_t *rb, void *buff, size_t n)
 {
 	size_t	data_s;
 	size_t	i;
@@ -69,7 +62,7 @@ rn_buff_read(gn_buff_t *rb, void *buff, size_t n)
 }
 
 ssize_t
-rn_buff_write(gn_buff_t *rb, void *buff, size_t n)
+rbuff_write(rbuff_t *rb, void *buff, size_t n)
 {
 	size_t	data_s;
 	size_t	i;
@@ -93,8 +86,8 @@ rn_buff_write(gn_buff_t *rb, void *buff, size_t n)
 	return (i);
 }
 
-ssize_t
-fw_buff_read(gn_buff_t *fb, void *buff, size_t n)
+static ssize_t
+fw_rbuff_read(rbuff_t *fb, void *buff, size_t n)
 {
 	size_t	data_s;
 	size_t	i;
@@ -113,8 +106,8 @@ fw_buff_read(gn_buff_t *fb, void *buff, size_t n)
 	return (i);
 }
 
-ssize_t
-fw_buff_write(gn_buff_t *fb, void *buff, size_t n)
+static ssize_t
+fw_rbuff_write(rbuff_t *fb, void *buff, size_t n)
 {
 	size_t	data_s;
 	size_t	i;
@@ -133,10 +126,10 @@ fw_buff_write(gn_buff_t *fb, void *buff, size_t n)
 
 
 ssize_t
-ll_buff_read(gn_buff_t **ll, void *buff, size_t n)
+lbuff_read(rbuff_t **ll, void *buff, size_t n)
 {
-	gn_buff_t	*tmp;
-	gn_buff_t	*swap;
+	rbuff_t	*tmp;
+	rbuff_t	*swap;
 	size_t		i;
 	ssize_t		ret;
 
@@ -148,7 +141,7 @@ ll_buff_read(gn_buff_t **ll, void *buff, size_t n)
 	i = n;
 	while (n && tmp)
 	{
-		ret = fw_buff_read(tmp, buff, n);
+		ret = fw_rbuff_read(tmp, buff, n);
 		if (-EEMPTY == ret)
 			break;
 		else if (0 > ret)
@@ -168,15 +161,15 @@ ll_buff_read(gn_buff_t **ll, void *buff, size_t n)
 }
 
 ssize_t
-ll_buff_write(gn_buff_t **ll, void *buff, size_t n)
+lbuff_write(rbuff_t **ll, void *buff, size_t n)
 {
 	size_t		i;
 	ssize_t		ret;
-	gn_buff_t	*tmp;
+	rbuff_t	*tmp;
 
 	if (!ll || !buff)
 		return (-EBUFF);
-	if (!*ll && 0 > gn_buff_init(ll, LL_BUFF_STD_SIZE))
+	if (!*ll && 0 > rbuff_init(ll, NULL, LL_BUFF_STD_SIZE))
 		return (-EBUFF);
 	tmp = *ll;
 	while (tmp->wi == tmp->bfs && tmp->next)
@@ -184,10 +177,10 @@ ll_buff_write(gn_buff_t **ll, void *buff, size_t n)
 	i = n;
 	while (n)
 	{
-		ret = fw_buff_write(tmp, buff, n);
+		ret = fw_rbuff_write(tmp, buff, n);
 		if (0 > ret)
 		{
-			if (!tmp->next && 0 > gn_buff_init(&tmp->next, tmp->bfs))
+			if (!tmp->next && 0 > rbuff_init(&tmp->next, NULL, tmp->bfs + sizeof(rbuff_t)))
 				return (-EBUFF);
 			tmp = tmp->next;
 		}
@@ -200,11 +193,26 @@ ll_buff_write(gn_buff_t **ll, void *buff, size_t n)
 	return (i - n);
 }
 
+ssize_t
+lbuff_size(rbuff_t *rb)
+{
+	ssize_t	sz;
+
+	sz = 0;
+	if (rb)
+		sz -= rb->ri;
+	while (rb)
+	{
+		sz += rb->wi;
+		rb = rb->next;
+	}
+	return (sz);
+}
 
 void
-ll_buff_del(gn_buff_t *ln)
+lbuff_del(rbuff_t *ln)
 {
-	gn_buff_t	*tmp;
+	rbuff_t	*tmp;
 
 	while (ln)
 	{
@@ -213,5 +221,7 @@ ll_buff_del(gn_buff_t *ln)
 	}	ln = tmp;
 }
 
-
+#ifdef __cplusplus
+}
+#endif
 
